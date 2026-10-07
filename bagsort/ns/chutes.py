@@ -2,24 +2,31 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from bagsort.errors import NotFoundError, ValidationError
 
 
 @dataclass(frozen=True)
 class Lane:
-    """One chute with the carousel it feeds."""
+    """One chute with the carousel it feeds.
+
+    ``capacity`` is how many not-yet-sorted bags the lane can absorb; zero
+    means the lane has no configured bound and the degradation planner treats
+    it as always absorbable.
+    """
 
     chute_id: str
     carousel_id: str
     enabled: bool = True
+    capacity: int = 0
 
     def as_dict(self) -> dict[str, object]:
         return {
             "chute_id": self.chute_id,
             "carousel_id": self.carousel_id,
             "enabled": self.enabled,
+            "capacity": self.capacity,
         }
 
 
@@ -29,11 +36,20 @@ class ChuteRegistry:
 
     lanes: dict[str, Lane] = field(default_factory=dict)
 
-    def register(self, chute_id: str, carousel_id: str, enabled: bool = True) -> Lane:
+    def register(
+        self, chute_id: str, carousel_id: str, enabled: bool = True, capacity: int = 0
+    ) -> Lane:
         identifier = (chute_id or "").strip()
         if not identifier:
             raise ValidationError("chute id must not be empty")
-        lane = Lane(chute_id=identifier, carousel_id=carousel_id.strip(), enabled=enabled)
+        if capacity < 0:
+            raise ValidationError("chute capacity must not be negative")
+        lane = Lane(
+            chute_id=identifier,
+            carousel_id=carousel_id.strip(),
+            enabled=enabled,
+            capacity=capacity,
+        )
         self.lanes[identifier] = lane
         return lane
 
@@ -52,13 +68,13 @@ class ChuteRegistry:
 
     def disable(self, chute_id: str) -> Lane:
         lane = self.get(chute_id)
-        updated = Lane(chute_id=lane.chute_id, carousel_id=lane.carousel_id, enabled=False)
+        updated = replace(lane, enabled=False)
         self.lanes[chute_id] = updated
         return updated
 
     def enable(self, chute_id: str) -> Lane:
         lane = self.get(chute_id)
-        updated = Lane(chute_id=lane.chute_id, carousel_id=lane.carousel_id, enabled=True)
+        updated = replace(lane, enabled=True)
         self.lanes[chute_id] = updated
         return updated
 

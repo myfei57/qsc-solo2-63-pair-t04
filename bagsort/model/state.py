@@ -14,6 +14,7 @@ from .entities import (
     AuditEntry,
     Bag,
     ChuteAssignment,
+    DegradationRecord,
     Flight,
     LoadRecord,
     Sequence,
@@ -31,6 +32,7 @@ class State:
     bags: dict[str, Bag] = field(default_factory=dict)
     mappings: dict[str, str] = field(default_factory=dict)
     assignments: dict[str, ChuteAssignment] = field(default_factory=dict)
+    degradations: dict[str, DegradationRecord] = field(default_factory=dict)
     sort_records: list[SortRecord] = field(default_factory=list)
     transfer_commands: list[TransferCommand] = field(default_factory=list)
     load_records: list[LoadRecord] = field(default_factory=list)
@@ -49,6 +51,7 @@ class State:
             bags=dict(self.bags),
             mappings=dict(self.mappings),
             assignments=dict(self.assignments),
+            degradations=dict(self.degradations),
             sort_records=list(self.sort_records),
             transfer_commands=list(self.transfer_commands),
             load_records=list(self.load_records),
@@ -69,6 +72,9 @@ class State:
             "mappings": dict(sorted(self.mappings.items())),
             "assignments": {
                 key: value.as_dict() for key, value in sorted(self.assignments.items())
+            },
+            "degradations": {
+                key: value.as_dict() for key, value in sorted(self.degradations.items())
             },
             "sort_records": [record.as_dict() for record in self.sort_records],
             "transfer_commands": [command.as_dict() for command in self.transfer_commands],
@@ -101,6 +107,12 @@ def apply_entry(state: State, kind: str, payload: dict[str, Any]) -> None:
     elif kind == "chute.assign":
         assignment = ChuteAssignment.from_dict(payload)
         state.assignments[assignment.flight_id] = assignment
+    elif kind == "degrade.open":
+        record = DegradationRecord.from_dict(payload["record"])
+        state.degradations[record.id] = record
+    elif kind == "degrade.recover":
+        record = DegradationRecord.from_dict(payload["record"])
+        state.degradations[record.id] = record
     elif kind == "bag.put":
         bag = Bag.from_dict(payload["bag"])
         state.bags[bag.id] = bag

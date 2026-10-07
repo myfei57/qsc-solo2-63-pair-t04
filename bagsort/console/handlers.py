@@ -323,10 +323,11 @@ def handle_list_chutes(server, request: Request) -> Response:
 
 def handle_register_chute(server, request: Request) -> Response:
     plant = _plant(server)
-    lane = plant.registry.register(
+    lane = plant.register_lane(
         request.required("chute_id"),
         request.required("carousel_id"),
         request.bool_field("enabled", True),
+        request.int_field("capacity", 0),
     )
     return json_response(lane.as_dict(), status=201)
 
@@ -363,6 +364,44 @@ def handle_disable_chute(server, request: Request) -> Response:
     return json_response(_plant(server).registry.disable(request.required("chute_id")).as_dict())
 
 
+def handle_plan_degradation(server, request: Request) -> Response:
+    report = _plant(server).degradation.plan(request.required("chute_id"))
+    return json_response(report.as_dict())
+
+
+def handle_degrade_chute(server, request: Request) -> Response:
+    record = _plant(server).degrade_chute(
+        request.required("chute_id"), strict=request.bool_field("strict", False)
+    )
+    return json_response(record.as_dict())
+
+
+def handle_recover_chute(server, request: Request) -> Response:
+    record = _plant(server).recover_chute(request.required("chute_id"))
+    return json_response(record.as_dict())
+
+
+def handle_list_degradations(server, request: Request) -> Response:
+    records = _plant(server).degradation.history()
+    return json_response([record.as_dict() for record in records])
+
+
+def handle_active_degradations(server, request: Request) -> Response:
+    records = _plant(server).degradation.active()
+    return json_response([record.as_dict() for record in records])
+
+
+def handle_get_degradation(server, request: Request) -> Response:
+    return json_response(_plant(server).degradation.get(request.param("id")).as_dict())
+
+
+def handle_reconcile(server, request: Request) -> Response:
+    findings = _plant(server).degradation.reconcile()
+    return json_response(
+        {"ok": not findings, "findings": [finding.as_dict() for finding in findings]}
+    )
+
+
 def handle_list_assignments(server, request: Request) -> Response:
     assignments = _plant(server).store.state().assignments
     return json_response([assignments[key].as_dict() for key in sorted(assignments)])
@@ -389,6 +428,13 @@ def handle_confirm_assignment(server, request: Request) -> Response:
         request.param("flight"), request.int_field("generation")
     )
     return json_response({"confirmed": True, **assignment.as_dict()})
+
+
+def handle_validate_assignment(server, request: Request) -> Response:
+    verdict = _plant(server).degradation.validate_reference(
+        request.param("flight"), request.int_field("generation")
+    )
+    return json_response(verdict)
 
 
 # ---------------------------------------------------------------------------

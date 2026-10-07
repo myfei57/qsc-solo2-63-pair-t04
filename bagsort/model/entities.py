@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-from .enums import BagState, FlightState
+from .enums import BagState, DegradationStatus, FlightState
 
 
 def _clean(raw: Any) -> Any:
@@ -152,6 +152,89 @@ class ChuteAssignment:
             generation=int(raw.get("generation", 1)),
             updated_at=str(raw.get("updated_at", "")),
         )
+
+
+@dataclass(frozen=True)
+class Placement:
+    """One flight moved off a degraded chute, with the generation hand-off."""
+
+    flight_id: str
+    from_chute: str
+    from_generation: int
+    to_chute: str
+    to_generation: int
+    pending_bags: int = 0
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "flight_id": self.flight_id,
+            "from_chute": self.from_chute,
+            "from_generation": self.from_generation,
+            "to_chute": self.to_chute,
+            "to_generation": self.to_generation,
+            "pending_bags": self.pending_bags,
+        }
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> "Placement":
+        return cls(
+            flight_id=str(raw["flight_id"]),
+            from_chute=str(raw.get("from_chute", "")),
+            from_generation=int(raw.get("from_generation", 0)),
+            to_chute=str(raw.get("to_chute", "")),
+            to_generation=int(raw.get("to_generation", 0)),
+            pending_bags=int(raw.get("pending_bags", 0)),
+        )
+
+
+@dataclass(frozen=True)
+class DegradationRecord:
+    """The committed fact of one chute degradation and the reroute it caused."""
+
+    id: str
+    chute_id: str
+    status: DegradationStatus = DegradationStatus.ACTIVE
+    placements: tuple[Placement, ...] = ()
+    overflow: tuple[str, ...] = ()
+    stranded_sorted: tuple[str, ...] = ()
+    queued_total: int = 0
+    watermark_before: int = 0
+    created_at: str = ""
+    recovered_at: str = ""
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "chute_id": self.chute_id,
+            "status": self.status.value,
+            "placements": [placement.as_dict() for placement in self.placements],
+            "overflow": list(self.overflow),
+            "stranded_sorted": list(self.stranded_sorted),
+            "queued_total": self.queued_total,
+            "watermark_before": self.watermark_before,
+            "created_at": self.created_at,
+            "recovered_at": self.recovered_at,
+        }
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> "DegradationRecord":
+        return cls(
+            id=str(raw["id"]),
+            chute_id=str(raw.get("chute_id", "")),
+            status=DegradationStatus(raw.get("status", DegradationStatus.ACTIVE.value)),
+            placements=tuple(
+                Placement.from_dict(item) for item in raw.get("placements", [])
+            ),
+            overflow=tuple(str(item) for item in raw.get("overflow", [])),
+            stranded_sorted=tuple(str(item) for item in raw.get("stranded_sorted", [])),
+            queued_total=int(raw.get("queued_total", 0)),
+            watermark_before=int(raw.get("watermark_before", 0)),
+            created_at=str(raw.get("created_at", "")),
+            recovered_at=str(raw.get("recovered_at", "")),
+        )
+
+    def evolved(self, **changes: Any) -> "DegradationRecord":
+        return replace(self, **changes)
 
 
 @dataclass(frozen=True)

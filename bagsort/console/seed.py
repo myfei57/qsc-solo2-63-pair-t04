@@ -26,7 +26,7 @@ def seed_defaults(plant: "Plant") -> dict[str, object]:
     seeded: dict[str, object] = {"chutes": [], "flights": []}
     if not plant.registry.lanes:
         for code, carousel in DEFAULT_CHUTES:
-            lane = plant.registry.register(
+            lane = plant.register_lane(
                 plant.namespace.chute_id(code), plant.namespace.carousel_id(carousel)
             )
             seeded["chutes"].append(lane.chute_id)

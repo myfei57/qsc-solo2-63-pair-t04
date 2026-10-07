@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from bagsort.model.enums import DegradationStatus
 from bagsort.model.validate import is_active_bag_state, is_open_state
 
 
@@ -31,6 +32,7 @@ class PlantReport:
     def summary(self) -> dict[str, object]:
         flights = self._book.list()
         bags = list(self._store.state().bags.values())
+        degradations = list(self._store.state().degradations.values())
         return {
             "terminal": self._ns.terminal,
             "line": list(self._topology.stages),
@@ -39,6 +41,11 @@ class PlantReport:
             "bags": len(bags),
             "active_bags": sum(1 for bag in bags if is_active_bag_state(bag.state)),
             "assignments": self._chutes.count(),
+            "active_degradations": sum(
+                1
+                for record in degradations
+                if record.status is DegradationStatus.ACTIVE
+            ),
             "sort_records": len(self._store.state().sort_records),
             "audit_entries": self._audit.count(),
             "audit_intact": self._audit.verify(),
@@ -76,6 +83,7 @@ class PlantReport:
             f"flights           : {summary['flights']} ({summary['open_flights']} open)",
             f"bags              : {summary['bags']} ({summary['active_bags']} active)",
             f"chute assignments : {summary['assignments']}",
+            f"degradations      : {summary['active_degradations']} active",
             f"sort records      : {summary['sort_records']}",
             f"audit entries     : {summary['audit_entries']} intact={summary['audit_intact']}",
             f"carousel          : {summary['carousel']} batch={summary['batch']}",

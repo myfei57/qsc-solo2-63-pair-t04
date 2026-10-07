@@ -1,4 +1,4 @@
-"""Enumerations for the two state machines the plant tracks."""
+"""Enumerations for the state machines the plant tracks."""
 
 from __future__ import annotations
 
@@ -41,3 +41,10 @@ class Verdict(str, Enum):
     FRESH = "fresh"
     REPLAYED = "replayed"
     ROLLED_OVER = "rolled_over"
+
+
+class DegradationStatus(str, Enum):
+    """Lifecycle of one chute degradation record."""
+
+    ACTIVE = "active"
+    RECOVERED = "recovered"

@@ -13,6 +13,7 @@ from bagsort.audit.chain import AuditChain
 from bagsort.belt.belt import Belt
 from bagsort.checkin.desk import Desk
 from bagsort.clock import Clock
+from bagsort.degrade.manager import DegradationManager
 from bagsort.errors import ConflictError
 from bagsort.events.bus import EventBus
 from bagsort.flight.book import FlightBook
@@ -61,6 +62,7 @@ class Plant:
     closer: FlightCloser
     chutes: ChuteAssigner
     chute_history: AssignmentHistory
+    degradation: DegradationManager
     sorter: Sorter
     injector: Injector
     desk: Desk
@@ -98,6 +100,14 @@ class Plant:
         schedule = ScheduleBoard(store, clock)
         chutes = ChuteAssigner(store, clock)
         chute_history = AssignmentHistory(store)
+        degradation = DegradationManager(
+            store,
+            chutes,
+            registry,
+            book,
+            clock,
+            IdFactory("deg", start=len(store.state().degradations)),
+        )
         sorter = Sorter(store, mapping, chutes, clock, VerdictTracker())
         injector = Injector(store, book, sorter, clock)
         quota = QuotaBook(store, clock)
@@ -115,6 +125,8 @@ class Plant:
             "bag.recheck_enqueued",
             "flight.closed",
             "chute.assigned",
+            "chute.degraded",
+            "chute.recovered",
             "belt.switched",
             "bag.remapped",
         ):
@@ -139,6 +151,7 @@ class Plant:
             closer=closer,
             chutes=chutes,
             chute_history=chute_history,
+            degradation=degradation,
             sorter=sorter,
             injector=injector,
             desk=desk,
@@ -167,6 +180,43 @@ class Plant:
         assignment = self.chutes.assign(flight_id, chute_id)
         self.bus.publish("chute.assigned", flight_id=flight_id, chute_id=chute_id)
         return assignment
+
+    def degrade_chute(self, chute_id: str, strict: bool = False):
+        record = self.degradation.degrade(chute_id, strict=strict)
+        self.bus.publish(
+            "chute.degraded",
+            chute_id=chute_id,
+            degradation_id=record.id,
+            placements=len(record.placements),
+            overflow=len(record.overflow),
+        )
+        return record
+
+    def recover_chute(self, chute_id: str):
+        record = self.degradation.recover(chute_id)
+        self.bus.publish(
+            "chute.recovered", chute_id=chute_id, degradation_id=record.id
+        )
+        return record
+
+    def register_lane(
+        self, chute_id: str, carousel_id: str, enabled: bool = True, capacity: int = 0
+    ):
+        """Register a lane, re-applying any journaled degradation to its flag.
+
+        Lanes are runtime configuration while degradations are journaled, so
+        a lane registered after a restart comes up disabled when its chute is
+        still degraded on record.
+        """
+
+        lane = self.registry.register(
+            chute_id, carousel_id, enabled=enabled, capacity=capacity
+        )
+        if any(
+            record.chute_id == lane.chute_id for record in self.degradation.active()
+        ):
+            lane = self.registry.disable(lane.chute_id)
+        return lane
 
     def read_barcode(self, barcode: str) -> Reading:
         return self.reader.read(barcode)
@@ -257,6 +307,8 @@ class _AuditSubscriber:
         "bag.recheck_enqueued": ("recheck", "recheck"),
         "flight.closed": ("flight_close", "audit"),
         "chute.assigned": ("chute_assign", "chute"),
+        "chute.degraded": ("chute_degraded", "chute"),
+        "chute.recovered": ("chute_recovered", "chute"),
         "belt.switched": ("belt_switch", "belt"),
         "bag.remapped": ("remap", "checkin"),
     }
@@ -272,6 +324,7 @@ class _AuditSubscriber:
         subject = str(
             event.payload.get("bag_id")
             or event.payload.get("flight_id")
+            or event.payload.get("chute_id")
             or event.payload.get("carousel")
             or ""
         )
