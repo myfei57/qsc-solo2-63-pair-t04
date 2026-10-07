@@ -239,6 +239,144 @@ class LoadRecord:
 
 
 @dataclass(frozen=True)
+class LaneRecord:
+    """A physical chute as it exists in the committed document.
+
+    Unlike the in-memory registry, this survives a restart. ``capacity`` is how
+    many bags the chute may hold; a reroute plan treats
+    ``capacity - bags currently sitting in the chute`` as the headroom a
+    diverted flight may move into.
+    """
+
+    chute_id: str
+    carousel_id: str
+    enabled: bool = True
+    capacity: int = 0
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "chute_id": self.chute_id,
+            "carousel_id": self.carousel_id,
+            "enabled": self.enabled,
+            "capacity": self.capacity,
+        }
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> "LaneRecord":
+        return cls(
+            chute_id=str(raw["chute_id"]),
+            carousel_id=str(raw.get("carousel_id", "")),
+            enabled=bool(raw.get("enabled", True)),
+            capacity=int(raw.get("capacity", 0)),
+        )
+
+    def evolved(self, **changes: Any) -> "LaneRecord":
+        return replace(self, **changes)
+
+
+@dataclass(frozen=True)
+class DegradationIncident:
+    """One chute outage and the reroute generation it forced.
+
+    The before/after snapshots are a journal watermark plus the digest of every
+    committed entry up to it, so an auditor can prove the folded state around
+    the outage matches what the audit chain says happened.
+    """
+
+    id: str
+    chute_id: str
+    status: str = "active"
+    affected_flights: tuple[str, ...] = ()
+    generations: dict[str, int] = field(default_factory=dict)
+    before_watermark: int = 0
+    before_digest: str = ""
+    after_watermark: int = 0
+    after_digest: str = ""
+    opened_at: str = ""
+    recovered_at: str = ""
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "chute_id": self.chute_id,
+            "status": self.status,
+            "affected_flights": list(self.affected_flights),
+            "generations": dict(sorted(self.generations.items())),
+            "before_watermark": self.before_watermark,
+            "before_digest": self.before_digest,
+            "after_watermark": self.after_watermark,
+            "after_digest": self.after_digest,
+            "opened_at": self.opened_at,
+            "recovered_at": self.recovered_at,
+        }
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> "DegradationIncident":
+        return cls(
+            id=str(raw["id"]),
+            chute_id=str(raw["chute_id"]),
+            status=str(raw.get("status", "active")),
+            affected_flights=tuple(str(item) for item in raw.get("affected_flights", ())),
+            generations={str(key): int(value) for key, value in raw.get("generations", {}).items()},
+            before_watermark=int(raw.get("before_watermark", 0)),
+            before_digest=str(raw.get("before_digest", "")),
+            after_watermark=int(raw.get("after_watermark", 0)),
+            after_digest=str(raw.get("after_digest", "")),
+            opened_at=str(raw.get("opened_at", "")),
+            recovered_at=str(raw.get("recovered_at", "")),
+        )
+
+    def evolved(self, **changes: Any) -> "DegradationIncident":
+        return replace(self, **changes)
+
+
+@dataclass(frozen=True)
+class RerouteRecord:
+    """The ledger line saying one piece of baggage followed a degradation move.
+
+    ``kind`` is ``queued_in_place`` for a bag still in the in-transit queue that
+    inherited the new assignment generation without moving twice,
+    ``stranded_rescue`` for a bag pulled out of the dead chute into recheck, and
+    ``overflow_manual`` for a bag no spare chute could take, left to explicit
+    manual handling rather than being dropped silently.
+    """
+
+    incident_id: str
+    bag_id: str
+    flight_id: str
+    from_chute: str
+    to_chute: str
+    generation: int
+    kind: str
+    at: str
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "incident_id": self.incident_id,
+            "bag_id": self.bag_id,
+            "flight_id": self.flight_id,
+            "from_chute": self.from_chute,
+            "to_chute": self.to_chute,
+            "generation": self.generation,
+            "kind": self.kind,
+            "at": self.at,
+        }
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> "RerouteRecord":
+        return cls(
+            incident_id=str(raw["incident_id"]),
+            bag_id=str(raw["bag_id"]),
+            flight_id=str(raw.get("flight_id", "")),
+            from_chute=str(raw.get("from_chute", "")),
+            to_chute=str(raw.get("to_chute", "")),
+            generation=int(raw.get("generation", 0)),
+            kind=str(raw.get("kind", "")),
+            at=str(raw.get("at", "")),
+        )
+
+
+@dataclass(frozen=True)
 class Sequence:
     epoch: int = 0
     next_value: int = 0

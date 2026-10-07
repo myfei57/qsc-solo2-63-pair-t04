@@ -13,6 +13,8 @@ from bagsort.audit.chain import AuditChain
 from bagsort.belt.belt import Belt
 from bagsort.checkin.desk import Desk
 from bagsort.clock import Clock
+from bagsort.degrade.board import DegradationBoard
+from bagsort.degrade.manager import DegradationManager
 from bagsort.errors import ConflictError
 from bagsort.events.bus import EventBus
 from bagsort.flight.book import FlightBook
@@ -67,6 +69,8 @@ class Plant:
     recheck: RecheckQueue
     belt: Belt
     quota: QuotaBook
+    degradation: DegradationManager
+    board: DegradationBoard
     audit: AuditChain
     report: PlantReport
 
@@ -96,15 +100,25 @@ class Plant:
         book = FlightBook(store, clock)
         mapping = BagMapping(store, clock)
         schedule = ScheduleBoard(store, clock)
-        chutes = ChuteAssigner(store, clock)
+        board = DegradationBoard(store)
+        chutes = ChuteAssigner(store, clock, chute_gate=board.is_routable)
         chute_history = AssignmentHistory(store)
-        sorter = Sorter(store, mapping, chutes, clock, VerdictTracker())
+        registry.bind(store, clock)
+        sorter = Sorter(
+            store,
+            mapping,
+            chutes,
+            clock,
+            VerdictTracker(),
+            chute_gate=board.is_routable,
+        )
         injector = Injector(store, book, sorter, clock)
         quota = QuotaBook(store, clock)
         desk = Desk(store, reader, book, mapping, injector, quota, clock, handling_line())
         closer = FlightCloser(book)
         recheck = RecheckQueue(store, book, clock)
         belt = Belt(store, clock, IdFactory("cmd"))
+        degradation = DegradationManager(store, clock, registry, board, IdFactory("inc"))
 
         audit = AuditChain(store, clock, handling_line())
         audit_subscriber = _AuditSubscriber(audit)
@@ -115,6 +129,8 @@ class Plant:
             "bag.recheck_enqueued",
             "flight.closed",
             "chute.assigned",
+            "chute.degraded",
+            "chute.recovered",
             "belt.switched",
             "bag.remapped",
         ):
@@ -145,6 +161,8 @@ class Plant:
             recheck=recheck,
             belt=belt,
             quota=quota,
+            degradation=degradation,
+            board=board,
             audit=audit,
             report=report,
         )
@@ -243,6 +261,36 @@ class Plant:
     def set_quota(self, flight_id: str, limit: int) -> int:
         return self.quota.set_limit(flight_id, limit)
 
+    def plan_degradation(self, chute_id: str):
+        return self.degradation.plan(chute_id)
+
+    def degrade_chute(self, chute_id: str, force: bool = False):
+        incident = self.degradation.degrade(chute_id, force=force)
+        self.bus.publish(
+            "chute.degraded",
+            chute_id=chute_id,
+            incident_id=incident.id,
+            flights=list(incident.affected_flights),
+            forced=force,
+        )
+        return incident
+
+    def recover_chute(self, incident_id: str):
+        incident = self.degradation.recover(incident_id)
+        self.bus.publish(
+            "chute.recovered",
+            chute_id=incident.chute_id,
+            incident_id=incident.id,
+            flights=list(incident.affected_flights),
+        )
+        return incident
+
+    def reconcile_incident(self, incident_id: str):
+        return self.degradation.reconcile(incident_id)
+
+    def revalidate_assignment(self, flight_id: str, generation: int) -> dict[str, object]:
+        return self.degradation.revalidate_reference(flight_id, generation)
+
     def verify(self) -> bool:
         return self.audit.verify()
 
@@ -257,6 +305,8 @@ class _AuditSubscriber:
         "bag.recheck_enqueued": ("recheck", "recheck"),
         "flight.closed": ("flight_close", "audit"),
         "chute.assigned": ("chute_assign", "chute"),
+        "chute.degraded": ("chute_degrade", "chute"),
+        "chute.recovered": ("chute_recover", "chute"),
         "belt.switched": ("belt_switch", "belt"),
         "bag.remapped": ("remap", "checkin"),
     }
@@ -272,6 +322,7 @@ class _AuditSubscriber:
         subject = str(
             event.payload.get("bag_id")
             or event.payload.get("flight_id")
+            or event.payload.get("chute_id")
             or event.payload.get("carousel")
             or ""
         )

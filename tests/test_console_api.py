@@ -305,3 +305,76 @@ def test_wsgi_rejects_a_bad_body(tmp_path):
     chunks = server(environ, start_response)
     assert captured["status"].startswith("400")
     assert json.loads(b"".join(chunks))["error"]
+
+
+def _bootstrap_degradation(server):
+    # lanes
+    assert call(server, "POST", "/api/chutes", {"chute_id": "T1-CHA", "carousel_id": "T1-CRCR1", "capacity": 40})[0] == 201
+    assert call(server, "POST", "/api/chutes", {"chute_id": "T1-CHB", "carousel_id": "T1-CRCR1", "capacity": 40})[0] == 201
+    flight_id = bootstrap(server)
+    assert call(server, "POST", "/api/chutes/assign", {"flight_id": flight_id, "chute_id": "T1-CHA"})[0] == 200
+    checked = []
+    for barcode in ("D1", "D2", "D3"):
+        status, bag = call(server, "POST", "/api/bags/checkin", {"barcode": barcode, "flight_id": flight_id})
+        assert status == 201
+        checked.append(bag["id"])
+    # one bag already sorted into the soon-dead chute
+    assert call(server, "POST", "/api/sort", {"bag_id": checked[0], "chute_id": "T1-CHA"})[0] == 201
+    return flight_id, checked
+
+
+def test_degradation_api_plan_degrade_reconcile_recover(server):
+    flight_id, bags = _bootstrap_degradation(server)
+
+    status, plan = call(server, "POST", "/api/degradation/plan", {"chute_id": "T1-CHA"})
+    assert status == 200
+    assert plan["feasible"] is True
+    assert plan["affected_flights"] == [flight_id]
+    assert plan["impacts"][0]["queued"] == 2
+    assert plan["impacts"][0]["stranded"] == 1
+
+    status, incident = call(server, "POST", "/api/degradation/degrade", {"chute_id": "T1-CHA"})
+    assert status == 201
+    incident_id = incident["id"]
+    assert incident["status"] == "active"
+    assert incident["before_watermark"] < incident["after_watermark"]
+
+    # flight now points at the spare
+    status, assignment = call(server, "GET", f"/api/assignments/{flight_id}")
+    assert assignment["chute_id"] == "T1-CHB"
+
+    status, reroutes = call(server, "GET", f"/api/degradation/incidents/{incident_id}/reroutes")
+    kinds = sorted(row["kind"] for row in reroutes)
+    assert kinds == ["queued_in_place", "queued_in_place", "stranded_rescue"]
+
+    status, report = call(server, "GET", f"/api/degradation/incidents/{incident_id}/reconcile")
+    assert status == 200 and report["ok"] is True
+    assert report["rescued"] == [bags[0]]
+
+    status, recovered = call(server, "POST", f"/api/degradation/recover/{incident_id}")
+    assert status == 200 and recovered["status"] == "recovered"
+
+    status, assignment = call(server, "GET", f"/api/assignments/{flight_id}")
+    assert assignment["chute_id"] == "T1-CHA"
+
+    status, result = call(
+        server,
+        "POST",
+        "/api/degradation/revalidate",
+        {"flight_id": flight_id, "generation": 2},
+    )
+    assert status == 200 and result["current"] is False
+    assert result["recovered_incidents"][0]["incident_id"] == incident_id
+
+
+def test_degradation_api_rejects_overflow_until_force(server):
+    flight_id, bags = _bootstrap_degradation(server)
+    call(server, "POST", "/api/chutes/capacity", {"chute_id": "T1-CHB", "capacity": 0})
+    status, plan = call(server, "POST", "/api/degradation/plan", {"chute_id": "T1-CHA"})
+    assert plan["feasible"] is False
+    status, error = call(server, "POST", "/api/degradation/degrade", {"chute_id": "T1-CHA"})
+    assert status in (400, 409) and error["error"]
+    status, forced = call(
+        server, "POST", "/api/degradation/degrade", {"chute_id": "T1-CHA", "force": True}
+    )
+    assert status == 201 and forced["status"] == "active"

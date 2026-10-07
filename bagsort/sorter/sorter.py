@@ -8,6 +8,8 @@ second sort record.
 
 from __future__ import annotations
 
+from typing import Callable
+
 from bagsort.clock import Clock
 from bagsort.errors import ConflictError
 from bagsort.model.entities import Bag, Reading, SortRecord
@@ -18,6 +20,8 @@ from bagsort.chute.assigner import ChuteAssigner
 from bagsort.flight.mapping import BagMapping
 from .records import SortLog
 from .route import RouteDetail
+
+ChuteGate = Callable[[str], bool]
 
 
 class Sorter:
@@ -30,12 +34,14 @@ class Sorter:
         chutes: ChuteAssigner,
         clock: Clock,
         verdict: VerdictTracker | None = None,
+        chute_gate: ChuteGate | None = None,
     ) -> None:
         self._store = store
         self._mapping = mapping
         self._chutes = chutes
         self._clock = clock
         self._verdict = verdict or VerdictTracker()
+        self._gate = chute_gate
         self._log = SortLog(store)
 
     @property
@@ -45,6 +51,11 @@ class Sorter:
     def route(self, bag_id: str) -> RouteDetail:
         flight_id = self._mapping.flight_of(bag_id)
         assignment = self._chutes.require(flight_id)
+        if self._gate is not None and not self._gate(assignment.chute_id):
+            raise ConflictError(
+                f"chute {assignment.chute_id!r} is degraded; "
+                f"flight {flight_id!r} must be rerouted first"
+            )
         return RouteDetail(
             bag_id=bag_id,
             flight_id=flight_id,

@@ -8,10 +8,10 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from bagsort.app import Plant
 
 DEFAULT_CHUTES = (
-    ("A", "CR1"),
-    ("B", "CR1"),
-    ("C", "CR2"),
-    ("D", "CR2"),
+    ("A", "CR1", 40),
+    ("B", "CR1", 40),
+    ("C", "CR2", 40),
+    ("D", "CR2", 40),
 )
 
 DEFAULT_FLIGHTS = (
@@ -25,9 +25,12 @@ def seed_defaults(plant: "Plant") -> dict[str, object]:
 
     seeded: dict[str, object] = {"chutes": [], "flights": []}
     if not plant.registry.lanes:
-        for code, carousel in DEFAULT_CHUTES:
+        for code, carousel, capacity in DEFAULT_CHUTES:
             lane = plant.registry.register(
-                plant.namespace.chute_id(code), plant.namespace.carousel_id(carousel)
+                plant.namespace.chute_id(code),
+                plant.namespace.carousel_id(carousel),
+                True,
+                capacity,
             )
             seeded["chutes"].append(lane.chute_id)
     if not plant.book.list():

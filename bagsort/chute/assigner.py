@@ -7,19 +7,24 @@ cache is prevented from sending bags to a chute that has already been closed.
 
 from __future__ import annotations
 
+from typing import Callable
+
 from bagsort.clock import Clock
-from bagsort.errors import StaleError, ValidationError
+from bagsort.errors import ConflictError, StaleError, ValidationError
 from bagsort.model.entities import ChuteAssignment
 from bagsort.model.errors import unknown_flight
 from bagsort.store.store import Store
+
+ChuteGate = Callable[[str], bool]
 
 
 class ChuteAssigner:
     """Assigns each flight's bags to a chute, versioned by generation."""
 
-    def __init__(self, store: Store, clock: Clock) -> None:
+    def __init__(self, store: Store, clock: Clock, chute_gate: ChuteGate | None = None) -> None:
         self._store = store
         self._clock = clock
+        self._gate = chute_gate
 
     def assign(self, flight_id: str, chute_id: str) -> ChuteAssignment:
         if flight_id not in self._store.state().flights:
@@ -27,6 +32,10 @@ class ChuteAssigner:
         identifier = (chute_id or "").strip()
         if not identifier:
             raise ValidationError("chute id must not be empty")
+        if self._gate is not None and not self._gate(identifier):
+            raise ConflictError(
+                f"cannot assign flight {flight_id!r} to degraded chute {identifier!r}"
+            )
         previous = self._store.state().assignments.get(flight_id)
         generation = (previous.generation + 1) if previous else 1
         assignment = ChuteAssignment(

@@ -14,8 +14,11 @@ from .entities import (
     AuditEntry,
     Bag,
     ChuteAssignment,
+    DegradationIncident,
     Flight,
+    LaneRecord,
     LoadRecord,
+    RerouteRecord,
     Sequence,
     SortRecord,
     TransferCommand,
@@ -31,6 +34,9 @@ class State:
     bags: dict[str, Bag] = field(default_factory=dict)
     mappings: dict[str, str] = field(default_factory=dict)
     assignments: dict[str, ChuteAssignment] = field(default_factory=dict)
+    lanes: dict[str, LaneRecord] = field(default_factory=dict)
+    incidents: dict[str, DegradationIncident] = field(default_factory=dict)
+    reroutes: list[RerouteRecord] = field(default_factory=list)
     sort_records: list[SortRecord] = field(default_factory=list)
     transfer_commands: list[TransferCommand] = field(default_factory=list)
     load_records: list[LoadRecord] = field(default_factory=list)
@@ -49,6 +55,9 @@ class State:
             bags=dict(self.bags),
             mappings=dict(self.mappings),
             assignments=dict(self.assignments),
+            lanes=dict(self.lanes),
+            incidents=dict(self.incidents),
+            reroutes=list(self.reroutes),
             sort_records=list(self.sort_records),
             transfer_commands=list(self.transfer_commands),
             load_records=list(self.load_records),
@@ -70,6 +79,9 @@ class State:
             "assignments": {
                 key: value.as_dict() for key, value in sorted(self.assignments.items())
             },
+            "lanes": {key: value.as_dict() for key, value in sorted(self.lanes.items())},
+            "incidents": {key: value.as_dict() for key, value in sorted(self.incidents.items())},
+            "reroutes": [record.as_dict() for record in self.reroutes],
             "sort_records": [record.as_dict() for record in self.sort_records],
             "transfer_commands": [command.as_dict() for command in self.transfer_commands],
             "load_records": [record.as_dict() for record in self.load_records],
@@ -101,6 +113,16 @@ def apply_entry(state: State, kind: str, payload: dict[str, Any]) -> None:
     elif kind == "chute.assign":
         assignment = ChuteAssignment.from_dict(payload)
         state.assignments[assignment.flight_id] = assignment
+    elif kind == "lane.put":
+        lane = LaneRecord.from_dict(payload["lane"])
+        state.lanes[lane.chute_id] = lane
+    elif kind == "incident.put":
+        incident = DegradationIncident.from_dict(payload["incident"])
+        state.incidents[incident.id] = incident
+    elif kind == "reroute.append":
+        state.reroutes.append(RerouteRecord.from_dict(payload["reroute"]))
+    elif kind == "reroute.clear":
+        state.reroutes = []
     elif kind == "bag.put":
         bag = Bag.from_dict(payload["bag"])
         state.bags[bag.id] = bag

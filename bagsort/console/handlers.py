@@ -359,6 +359,13 @@ def handle_enable_chute(server, request: Request) -> Response:
     return json_response(_plant(server).registry.enable(request.required("chute_id")).as_dict())
 
 
+def handle_set_chute_capacity(server, request: Request) -> Response:
+    lane = _plant(server).registry.set_capacity(
+        request.required("chute_id"), request.int_field("capacity")
+    )
+    return json_response(lane.as_dict())
+
+
 def handle_disable_chute(server, request: Request) -> Response:
     return json_response(_plant(server).registry.disable(request.required("chute_id")).as_dict())
 
@@ -389,6 +396,54 @@ def handle_confirm_assignment(server, request: Request) -> Response:
         request.param("flight"), request.int_field("generation")
     )
     return json_response({"confirmed": True, **assignment.as_dict()})
+
+
+# ---------------------------------------------------------------------------
+# degradation
+# ---------------------------------------------------------------------------
+
+
+def handle_degradation_plan(server, request: Request) -> Response:
+    plan = _plant(server).plan_degradation(request.required("chute_id"))
+    return json_response(plan.as_dict())
+
+
+def handle_degrade_chute(server, request: Request) -> Response:
+    incident = _plant(server).degrade_chute(
+        request.required("chute_id"), request.bool_field("force", False)
+    )
+    return json_response(incident.as_dict(), status=201)
+
+
+def handle_recover_chute(server, request: Request) -> Response:
+    incident = _plant(server).recover_chute(request.param("incident"))
+    return json_response(incident.as_dict())
+
+
+def handle_list_incidents(server, request: Request) -> Response:
+    return json_response([incident.as_dict() for incident in _plant(server).degradation.history()])
+
+
+def handle_get_incident(server, request: Request) -> Response:
+    incident = _plant(server).board.require(request.param("incident"))
+    return json_response(incident.as_dict())
+
+
+def handle_incident_reconcile(server, request: Request) -> Response:
+    report = _plant(server).reconcile_incident(request.param("incident"))
+    return json_response(report.as_dict())
+
+
+def handle_incident_reroutes(server, request: Request) -> Response:
+    records = _plant(server).degradation.reroutes(request.param("incident"))
+    return json_response([record.as_dict() for record in records])
+
+
+def handle_revalidate_assignment(server, request: Request) -> Response:
+    result = _plant(server).revalidate_assignment(
+        request.required("flight_id"), request.int_field("generation")
+    )
+    return json_response(result)
 
 
 # ---------------------------------------------------------------------------
